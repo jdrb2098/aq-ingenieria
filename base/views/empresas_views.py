@@ -1,0 +1,220 @@
+from base.serializers.empresa_serializers import OfertaSerializer,ReviewsSerializer, SocialMediaUrlSerializer, EmpresaSerializer
+from base.models import Oferta, Review, Empresa, SocialMediaUrl
+from rest_framework.views import APIView
+from rest_framework import generics
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import render
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.db.models import Q
+
+
+
+class OfertaView(APIView):
+    parser_classes = (MultiPartParser, FormParser)
+
+    def get(self, request, *args, **kwargs):
+        query = request.query_params.get('keyword')
+        if query == None:
+            query = ''
+        
+        ofertas = Oferta.objects.distinct().filter(
+        Q(categoria__nombre__icontains=query) |
+        Q(nombre__icontains=query)).order_by('-createdAt')
+        page = request.query_params.get('page')
+        paginator = Paginator(ofertas, 5)
+
+        try:
+            ofertas = paginator.page(page)
+        except PageNotAnInteger:
+            ofertas = paginator.page(1)
+        except EmptyPage:
+            ofertas = paginator.page(paginator.num_pages)
+
+        if page == None:
+            page = 1
+
+        page = int(page)
+        print('Page:', page, '')
+        serializer = OfertaSerializer(ofertas, many=True)
+        
+        return Response({'ofertas': serializer.data, 'page': page, 'pages': paginator.num_pages})
+
+    def post(self, request, *args, **kwargs):
+        ofertas_serializer = OfertaSerializer(data=request.data)
+        if ofertas_serializer.is_valid():
+            ofertas_serializer.save()
+            return Response(ofertas_serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            print('error', ofertas_serializer.errors)
+            return Response(ofertas_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class GetEmpresa(generics.ListAPIView):
+    serializer_class=EmpresaSerializer
+    def get (self,request,pk):
+        try:
+            query = request.query_params.get('keyword')
+            if query == None:
+                query = ''
+            empresa= Empresa.objects.get(id=pk)
+            urls = SocialMediaUrl.objects.filter(empresa=pk)
+            serializer = self.serializer_class(empresa)
+            urls_serializer = SocialMediaUrlSerializer(urls,many=True)
+            return Response({'success':True,'Empresa' : serializer.data, 'SocialMediaUrls':urls_serializer.data}, status=status.HTTP_200_OK)
+        except:
+            return Response({'success':False,'detail': 'no existe empresa'}, status=status.HTTP_400_BAD_REQUEST)
+class GetOfertaReviews(generics.ListAPIView):
+    serializer_class=ReviewsSerializer
+    def get (self,request,pk):
+        oferta= Oferta.objects.get(_id=pk)
+        Reviews = Review.objects.filter(oferta=oferta._id)
+        serializer = self.serializer_class(Reviews, many=True)
+        return Response({'success':True,'Reviews' : serializer.data}, status=status.HTTP_200_OK)
+        
+class GetSocialMediaUrls(generics.ListAPIView):
+    serializer_class = SocialMediaUrlSerializer
+    def get (self,request,pk):
+        empresa= Empresa.objects.get(id=pk)
+        social_media_urls = SocialMediaUrl.objects.filter(empresa=empresa.id)
+        serializer = self.serializer_class(social_media_urls, many=True)
+        return Response({'success':True,'Reviews' : serializer.data}, status=status.HTTP_200_OK)
+
+
+class GetOfertasEmpresa(generics.ListAPIView):
+    serializer_class= OfertaSerializer
+    def get (self,request,pk):
+        empresa= Empresa.objects.get(id=pk)
+        print(empresa)
+        ofertas = Oferta.objects.filter(empresa=empresa)
+        print(ofertas)
+        serializer = self.serializer_class(ofertas, many=True)
+        return Response({'success':True,'ofertas' : serializer.data}, status=status.HTTP_200_OK)
+      
+class GetEmpresas(generics.ListAPIView):
+    serializer_class=EmpresaSerializer
+    def get (self,request):
+        query = request.query_params.get('keyword')
+        if query == None:
+            query = ''
+        empresa= Empresa.objects.filter(nombre__icontains=query)
+        serializer = self.serializer_class(empresa, many=True)
+        return Response({'success':True,'Empresas': serializer.data}, status=status.HTTP_200_OK)
+        
+
+
+@api_view(['GET'])
+def getTopOfertas(request):
+    products = Oferta.objects.filter(rating__gte=4).order_by('-rating')[0:5]
+    serializer = OfertaSerializer(products, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+def getOferta(request, pk):
+    product = Oferta.objects.get(_id=pk)
+    serializer = OfertaSerializer(product, many=False)
+    return Response(serializer.data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def createOferta(request):
+    user = request.user
+
+    oferta = Oferta.objects.create(
+        user=user,
+        nombre='Sample Name',
+        price=0,
+        brand='Sample Brand',
+        countInStock=0,
+        category='Sample Category',
+        description=''
+    )
+
+    serializer = OfertaSerializer(oferta, many=False)
+    return Response(serializer.data)
+
+
+@api_view(['PUT'])
+@permission_classes([IsAdminUser])
+def updateOferta(request, pk):
+    data = request.data
+    oferta = Oferta.objects.get(_id=pk)
+
+    oferta.name = data['name']
+    oferta.price = data['price']
+    oferta.brand = data['brand']
+    oferta.countInStock = data['countInStock']
+    oferta.category = data['category']
+    oferta.description = data['description']
+
+    oferta.save()
+
+    serializer = OfertaSerializer(oferta, many=False)
+    return Response(serializer.data)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAdminUser])
+def deleteOferta(request, pk):
+    oferta = Oferta.objects.get(_id=pk)
+    oferta.delete()
+    return Response('Oferta Eliminada')
+
+
+@api_view(['POST'])
+def uploadImage(request):
+    data = request.data
+
+    oferta_id = data['product_id']
+    oferta = Oferta.objects.get(_id=oferta_id)
+
+    oferta.image = request.FILES.get('image')
+    oferta.save()
+
+    return Response('Image was uploaded')
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def createOfertaReview(request, pk):
+    user = request.user
+    oferta = Oferta.objects.get(_id=pk)
+    data = request.data
+
+    # 1 - Review already exists
+    alreadyExists = oferta.review_set.filter(user=user).exists()
+    if alreadyExists:
+        content = {'detail': 'ya calificaste esta oferta'}
+        return Response(content, status=status.HTTP_400_BAD_REQUEST)
+
+    # 2 - No Rating or 0
+    elif data['rating'] == 0:
+        content = {'detail': 'Porfavor ingresa una puntuacion'}
+        return Response(content, status=status.HTTP_400_BAD_REQUEST)
+
+    # 3 - Create review
+    else:
+        review = Review.objects.create(
+            user=user,
+            oferta=oferta,
+            name=user.first_name,
+            rating=data['rating'],
+            comment=data['comment'],
+        )
+
+        reviews = oferta.review_set.all()
+        oferta.numReviews = len(reviews)
+
+        total = 0
+        for i in reviews:
+            total += i.rating
+
+        oferta.rating = total / len(reviews)
+        oferta.save()
+
+        return Response('Review Added')
+
